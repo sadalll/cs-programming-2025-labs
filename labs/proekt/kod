@@ -1,0 +1,539 @@
+import json
+import datetime
+
+PRICES = {
+    "АИ-92": 48.50,
+    "АИ-95": 53.20,
+    "АИ-98": 60.80,
+    "ДТ": 52.10
+}
+
+
+class Cistern:
+    def __init__(self, name, fuel_type, max_vol, curr_vol=0, enabled=True):
+        self.name = name
+        self.fuel_type = fuel_type
+        self.max_vol = max_vol
+        self.curr_vol = curr_vol
+        self.enabled = enabled
+        self.min_level = max_vol * 0.1
+
+    def save(self):
+        return {
+            'name': self.name,
+            'fuel': self.fuel_type,
+            'max': self.max_vol,
+            'curr': self.curr_vol,
+            'on': self.enabled,
+            'min': self.min_level
+        }
+
+    @staticmethod
+    def load(data):
+        c = Cistern(data['name'], data['fuel'], data['max'], data['curr'], data['on'])
+        c.min_level = data['min']
+        return c
+class Column:
+    def __init__(self, num, fuels):
+        self.num = num
+        self.fuels = fuels
+class AZS:
+    def __init__(self):
+        self.cisterns = {}
+        self.columns = []
+        self.history = []
+        self.money = 0
+        self.cars = 0
+        self.fuel_sold = {"АИ-92": 0, "АИ-95": 0, "АИ-98": 0, "ДТ": 0}
+        self.emergency_mode = False
+        self.load()
+    def load(self):
+        try:
+            with open('cisterns.json', 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                for c in data:
+                    cistern = Cistern.load(c)
+                    self.cisterns[cistern.name] = cistern
+
+            with open('columns.json', 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                for col in data:
+                    self.columns.append(Column(col['num'], col['fuels']))
+
+            with open('stats.json', 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                self.money = data['money']
+                self.cars = data['cars']
+                self.fuel_sold = data['fuel']
+
+            with open('history.json', 'r', encoding='utf-8') as f:
+                self.history = json.load(f)
+
+            with open('emergency.json', 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                self.emergency_mode = data.get('emergency_mode', False)
+        except:
+            self.setup_default()
+    def save(self):
+        with open('cisterns.json', 'w', encoding='utf-8') as f:
+            json.dump([c.save() for c in self.cisterns.values()], f, indent=2)
+        with open('columns.json', 'w', encoding='utf-8') as f:
+            data = []
+            for col in self.columns:
+                data.append({'num': col.num, 'fuels': col.fuels})
+            json.dump(data, f, indent=2)
+        with open('stats.json', 'w', encoding='utf-8') as f:
+            json.dump({
+                'money': self.money,
+                'cars': self.cars,
+                'fuel': self.fuel_sold
+            }, f, indent=2)
+        with open('history.json', 'w', encoding='utf-8') as f:
+            json.dump(self.history, f, indent=2)
+        with open('emergency.json', 'w', encoding='utf-8') as f:
+            json.dump({'emergency_mode': self.emergency_mode}, f, indent=2)
+    def setup_default(self):
+        # СОЗДАЕМ 8 ЦИСТЕРН - по 2 для каждого типа топлива
+        cisterns_data = [
+            ["АИ-95 №1", "АИ-95", 20000, 18000],
+            ["АИ-95 №2", "АИ-95", 20000, 12000],
+            ["АИ-92 №1", "АИ-92", 20000, 15000],
+            ["АИ-92 №2", "АИ-92", 20000, 8000],  # Вторая цистерна АИ-92
+            ["АИ-98 №1", "АИ-98", 15000, 10000, False],
+            ["АИ-98 №2", "АИ-98", 15000, 5000],  # Вторая цистерна АИ-98
+            ["ДТ №1", "ДТ", 25000, 20000],
+            ["ДТ №2", "ДТ", 25000, 15000]  # Вторая цистерна ДТ
+        ]
+
+        for c in cisterns_data:
+            if len(c) == 5:
+                self.cisterns[c[0]] = Cistern(c[0], c[1], c[2], c[3], c[4])
+            else:
+                self.cisterns[c[0]] = Cistern(c[0], c[1], c[2], c[3])
+        #  ПОДКЛЮЧЕНИЕ КОЛОНОК
+        connections = [
+            # Колонки 1-2: подключены к первым цистернам
+            {"АИ-95": "АИ-95 №1", "АИ-92": "АИ-92 №1"},
+            {"АИ-95": "АИ-95 №1", "АИ-92": "АИ-92 №1"},
+
+            # Колонки 3-4: подключены к первым цистернам всех типов
+            {"АИ-95": "АИ-95 №1", "АИ-92": "АИ-92 №1", "АИ-98": "АИ-98 №1", "ДТ": "ДТ №1"},
+            {"АИ-95": "АИ-95 №1", "АИ-92": "АИ-92 №1", "АИ-98": "АИ-98 №1", "ДТ": "ДТ №1"},
+
+            # Колонки 5-6: подключены ко вторым цистернам
+            {"АИ-95": "АИ-95 №2", "АИ-92": "АИ-92 №2", "АИ-98": "АИ-98 №2", "ДТ": "ДТ №2"},
+            {"АИ-95": "АИ-95 №2", "АИ-92": "АИ-92 №2", "АИ-98": "АИ-98 №2", "ДТ": "ДТ №2"},
+
+            # Колонки 7-8: подключены только ко вторым цистернам АИ-95 и ДТ
+            {"АИ-95": "АИ-95 №2", "ДТ": "ДТ №2"},
+            {"АИ-95": "АИ-95 №2", "ДТ": "ДТ №2"}
+        ]
+
+        for i, conn in enumerate(connections, 1):
+            self.columns.append(Column(i, conn))
+
+        # Добавляем запись в историю
+        self.add_to_history("Созданы начальные данные: 8 цистерн и 8 колонок")
+
+    def add_to_history(self, text):
+        time = datetime.datetime.now().strftime("%H:%M %d.%m")
+        self.history.append(f"[{time}] {text}")
+        if len(self.history) > 50:
+            self.history = self.history[-50:]
+
+    def show_menu(self):
+        print("=" * 40)
+        print("АЗС <<СеверНефть>>")
+        print("=" * 40)
+
+        off_cisterns = [c for c in self.cisterns.values() if not c.enabled]
+        if off_cisterns:
+            print("\nВНИМАНИЕ! Отключенные цистерны:")
+            for c in off_cisterns:
+                if c.curr_vol < c.min_level:
+                    print(f" - {c.name} (мало топлива)")
+                else:
+                    print(f" - {c.name}")
+        print("\n" + "-" * 40)
+        print("Меню:")
+        print("1) Обслужить клиента")
+        print("2) Проверить цистерны")
+        print("3) Пополнить цистерну")
+        print("4) Статистика")
+        print("5) История операций")
+        print("6) Перекачать топливо")
+        print("7) Включить/выключить цистерну")
+        print("8) Состояние колонок")
+        print("9) АВАРИЯ!")
+        print("0) Выход")
+
+    def get_int_input(self, prompt, min_val=1, max_val=10):
+        """Безопасный ввод целого числа"""
+        while True:
+            try:
+                value = int(input(prompt))
+                if min_val <= value <= max_val:
+                    return value
+                else:
+                    print(f"Введите число от {min_val} до {max_val}")
+            except ValueError:
+                print("Ошибка! Введите число.")
+
+    def get_float_input(self, prompt, min_val=0.1, max_val=100000):
+        """Безопасный ввод дробного числа"""
+        while True:
+            try:
+                value = float(input(prompt))
+                if min_val <= value <= max_val:
+                    return value
+                else:
+                    print(f"Введите число от {min_val} до {max_val:.0f}")
+            except ValueError:
+                print("Ошибка! Введите число.")
+
+    def serve_client(self):
+        if self.emergency_mode:
+            print("\nСейчас авария! Нельзя обслуживать.")
+            input("Enter...")
+            return
+
+        print("\n--- Обслуживание клиента ---")
+
+        print("\nКолонки (1-8):")
+        col_num = self.get_int_input("Номер колонки: ", 1, 8)
+        col = self.columns[col_num - 1]
+
+        print("\nДоступное топливо:")
+        fuels = []
+        for i, (fuel_type, cistern_name) in enumerate(col.fuels.items(), 1):
+            cistern = self.cisterns[cistern_name]
+            status = "✓" if cistern.enabled else "✗"
+            print(f"{i}) {fuel_type} ({cistern_name}) [{status}]")
+            fuels.append((fuel_type, cistern_name))
+
+        if not fuels:
+            print("На этой колонке нет доступного топлива!")
+            input("Enter...")
+            return
+
+        choice = self.get_int_input("Выберите топливо: ", 1, len(fuels))
+        fuel_type, cistern_name = fuels[choice - 1]
+        cistern = self.cisterns[cistern_name]
+
+        if not cistern.enabled:
+            print(f"\nОШИБКА: Цистерна {cistern_name} отключена!")
+            input("Enter...")
+            return
+
+        max_liters = cistern.curr_vol
+        print(f"\nДоступно: {max_liters:.1f} л")
+        liters = self.get_float_input(f"Сколько литров {fuel_type}? (макс {max_liters:.1f}): ", 0.1, max_liters)
+
+        if liters > cistern.curr_vol:
+            print("Не хватает топлива!")
+            input("Enter...")
+            return
+
+        price = liters * PRICES[fuel_type]
+        print(f"\nК оплате: {price:.2f} руб.")
+
+        confirm = input("Оплатить? (да/нет): ")
+        if confirm.lower() != 'да':
+            print("Отмена.")
+            input("Enter...")
+            return
+
+        cistern.curr_vol -= liters
+        self.money += price
+        self.cars += 1
+        self.fuel_sold[fuel_type] += liters
+
+        if cistern.curr_vol < cistern.min_level:
+            cistern.enabled = False
+            print(f"\nВНИМАНИЕ: Цистерна {cistern_name} отключена (низкий уровень)")
+
+        self.add_to_history(f"Продажа: {liters}л {fuel_type} на {price:.2f}руб")
+
+        print("\nСпасибо за покупку!")
+        input("Enter...")
+
+    def check_cisterns(self):
+        print("\n--- Цистерны ---")
+        print(f"Всего цистерн: {len(self.cisterns)}")
+
+        # Группируем по типу топлива
+        cisterns_by_fuel = {}
+        for cistern in self.cisterns.values():
+            if cistern.fuel_type not in cisterns_by_fuel:
+                cisterns_by_fuel[cistern.fuel_type] = []
+            cisterns_by_fuel[cistern.fuel_type].append(cistern)
+
+        for fuel_type, cisterns in cisterns_by_fuel.items():
+            print(f"\n{fuel_type}:")
+            for cistern in cisterns:
+                status = "ВКЛ" if cistern.enabled else "ВЫКЛ"
+                if cistern.curr_vol < cistern.min_level:
+                    status += " (мало!)"
+                print(f"  {cistern.name:12} {cistern.curr_vol:6.0f}/{cistern.max_vol:6.0f}л [{status}]")
+        input("\nEnter...")
+
+    def refuel_cistern(self):
+        print("\n--- Пополнение ---")
+
+        cisterns_list = list(self.cisterns.values())
+        for i, c in enumerate(cisterns_list, 1):
+            print(f"{i}) {c.name}")
+
+        choice = self.get_int_input("Выберите цистерну: ", 1, len(cisterns_list))
+        cistern = cisterns_list[choice - 1]
+
+        max_liters = cistern.max_vol - cistern.curr_vol
+        print(f"\nЦистерна: {cistern.name}")
+        print(f"Текущий уровень: {cistern.curr_vol:.0f} л")
+        print(f"Можно долить максимум: {max_liters:.0f} л")
+
+        liters = self.get_float_input("Сколько литров заливаем? ", 0.1, max_liters)
+
+        if cistern.curr_vol + liters > cistern.max_vol:
+            print("Не влезет! Слишком много.")
+            input("Enter...")
+            return
+
+        cistern.curr_vol += liters
+        self.add_to_history(f"Пополнение: {liters}л в {cistern.name}")
+
+        print("Готово! Цистерна пополнена.")
+        print(f"Теперь там: {cistern.curr_vol:.0f}л")
+        input("Enter...")
+    def show_stats(self):
+        print("\n--- Статистика ---")
+        print(f"Обслужено машин: {self.cars}")
+        print(f"Заработано: {self.money:.2f} руб")
+        print("\nПродано топлива:")
+        for fuel, liters in self.fuel_sold.items():
+            if liters > 0:
+                money = liters * PRICES[fuel]
+                print(f"{fuel}: {liters:.0f}л ({money:.0f} руб)")
+        input("\nEnter...")
+
+    def show_history(self):
+        print("\n--- История (последние 20) ---")
+        if not self.history:
+            print("История пуста")
+        else:
+            for event in self.history[-20:]:
+                print(event)
+        input("\nEnter...")
+
+    def transfer_fuel(self):
+        print("\n--- Перекачка топлива ---")
+
+        # Проверяем аварийный режим
+        if self.emergency_mode:
+            print("Аварийный режим! Перекачка невозможна.")
+            input("Enter...")
+            return
+
+        # Получаем список типов топлива
+        fuels = set(c.fuel_type for c in self.cisterns.values())
+        if not fuels:
+            print("Нет цистерн с топливом!")
+            input("Enter...")
+            return
+
+        # Показываем доступные типы топлива
+        print("\nДоступные типы топлива:")
+        fuels_list = list(fuels)
+        for i, fuel_type in enumerate(fuels_list, 1):
+            # Считаем сколько цистерн с этим топливом
+            count = len([c for c in self.cisterns.values() if c.fuel_type == fuel_type])
+            print(f"{i}) {fuel_type} ({count} цистерны)")
+
+        # Выбираем тип топлива
+        choice = self.get_int_input("\nВыберите тип топлива: ", 1, len(fuels_list))
+        fuel_type = fuels_list[choice - 1]
+
+        # Получаем цистерны этого типа
+        cisterns = [c for c in self.cisterns.values() if c.fuel_type == fuel_type]
+
+        # ПРОВЕРЯЕМ: нужно минимум 2 цистерны
+        if len(cisterns) < 2:
+            print(f"\nОШИБКА: Для перекачки нужно минимум 2 цистерны!")
+            print(f"У вас только {len(cisterns)} цистерна(ы) с топливом {fuel_type}")
+            print("Добавьте больше цистерн через меню или в начальных данных.")
+            input("\nEnter...")
+            return
+
+        print(f"\nЦистерны с топливом {fuel_type}:")
+        for i, c in enumerate(cisterns, 1):
+            status = "ВКЛ" if c.enabled else "ВЫКЛ"
+            print(f"{i}) {c.name} - {c.curr_vol:.0f}л [{status}]")
+
+        # Выбираем источник
+        from_idx = self.get_int_input("\nОткуда перекачиваем? (номер цистерны): ", 1, len(cisterns)) - 1
+
+        # Выбираем приемник
+        to_idx = self.get_int_input("Куда перекачиваем? (номер цистерны): ", 1, len(cisterns)) - 1
+
+        # Проверяем что не одна и та же цистерна
+        if from_idx == to_idx:
+            print("Нельзя перекачивать в ту же цистерну!")
+            input("Enter...")
+            return
+
+        from_c = cisterns[from_idx]
+        to_c = cisterns[to_idx]
+
+        # Проверяем доступность источника
+        if not from_c.enabled:
+            print(f"Цистерна-источник {from_c.name} отключена!")
+            input("Enter...")
+            return
+
+        # Рассчитываем максимальный объем для перекачки
+        max_from = from_c.curr_vol
+        max_to = to_c.max_vol - to_c.curr_vol
+        max_transfer = min(max_from, max_to)
+
+        if max_transfer <= 0:
+            print("Нельзя выполнить перекачку!")
+            if max_from <= 0:
+                print(f"Цистерна-источник {from_c.name} пустая!")
+            if max_to <= 0:
+                print(f"Цистерна-приемник {to_c.name} переполнена!")
+            input("Enter...")
+            return
+
+        print(f"\nМожно перекачать максимум: {max_transfer:.0f} л")
+        liters = self.get_float_input("Сколько литров перекачиваем? ", 0.1, max_transfer)
+
+        # Выполняем перекачку
+        from_c.curr_vol -= liters
+        to_c.curr_vol += liters
+
+        # Проверяем уровень в источнике после перекачки
+        if from_c.curr_vol < from_c.min_level:
+            from_c.enabled = False
+            print(f"\nВНИМАНИЕ: Цистерна {from_c.name} отключена (низкий уровень)")
+
+        self.add_to_history(f"Перекачка: {liters}л {fuel_type} из {from_c.name} в {to_c.name}")
+
+        print(f"\nПерекачка выполнена!")
+        print(f"В {from_c.name} осталось: {from_c.curr_vol:.0f} л")
+        print(f"В {to_c.name} теперь: {to_c.curr_vol:.0f} л")
+        input("Enter...")
+
+    def toggle_cistern(self):
+        print("\n--- Включение/выключение ---")
+
+        cisterns_list = list(self.cisterns.values())
+        for i, c in enumerate(cisterns_list, 1):
+            status = "ВКЛ" if c.enabled else "ВЫКЛ"
+            print(f"{i}) {c.name} [{status}]")
+
+        choice = self.get_int_input("Выберите цистерну: ", 1, len(cisterns_list))
+        cistern = cisterns_list[choice - 1]
+
+        if cistern.enabled:
+            cistern.enabled = False
+            print(f"Цистерна {cistern.name} выключена")
+        else:
+            if cistern.curr_vol < cistern.min_level:
+                print("Нельзя включить! Мало топлива.")
+                print(f"Минимум: {cistern.min_level:.0f} л, сейчас: {cistern.curr_vol:.0f} л")
+                input("Enter...")
+                return
+            cistern.enabled = True
+            print(f"Цистерна {cistern.name} включена")
+
+        self.add_to_history(f"Цистерна {cistern.name} {'включена' if cistern.enabled else 'выключена'}")
+        input("Enter...")
+
+    def show_columns(self):
+        print("\n--- Колонки ---")
+        for col in self.columns:
+            print(f"\nКолонка {col.num}:")
+            for fuel, cistern_name in col.fuels.items():
+                cistern = self.cisterns[cistern_name]
+                status = "✓ работает" if cistern.enabled else "✗ не работает"
+                print(f"  {fuel} -> {cistern_name} ({status})")
+        input("\nEnter...")
+
+    def emergency(self):
+        print("\n=== АВАРИЯ ===")
+
+        if self.emergency_mode:
+            print("Сейчас аварийный режим.")
+            choice = input("Выключить аварию? (да/нет): ")
+            if choice.lower() == 'да':
+                self.emergency_mode = False
+                print("Авария выключена.")
+                print("ВНИМАНИЕ: Цистерны остаются заблокированными!")
+                print("Разблокируйте их вручную через меню 'Включить/выключить цистерну'")
+                self.add_to_history("Аварийный режим выключен")
+        else:
+            print("ВНИМАНИЕ! Это включит аварийный режим!")
+            print("Все цистерны будут заблокированы!")
+            confirm = input("Точно включить? (да/нет): ")
+
+            if confirm.lower() == 'да':
+                self.emergency_mode = True
+                for cistern in self.cisterns.values():
+                    cistern.enabled = False
+                print("АВАРИЯ! Все цистерны заблокированы!")
+                print("Вызваны аварийные службы!")
+                self.add_to_history("АВАРИЯ! Все системы заблокированы!")
+
+        input("Enter...")
+
+    def run(self):
+        # Проверяем данные при запуске
+        print("\n=== ПРОВЕРКА ДАННЫХ ПРИ ЗАПУСКЕ ===")
+        print(f"Загружено цистерн: {len(self.cisterns)}")
+        for fuel_type in ["АИ-92", "АИ-95", "АИ-98", "ДТ"]:
+            count = len([c for c in self.cisterns.values() if c.fuel_type == fuel_type])
+            print(f"  {fuel_type}: {count} цистерны")
+
+        if len(self.cisterns) < 8:
+            print("\n⚠ ВНИМАНИЕ: Мало цистерн! Перекачка может не работать.")
+            print("Удалите файлы данных и перезапустите программу для создания новых.")
+
+        input("\nНажмите Enter для продолжения...")
+
+        while True:
+            print("\n" * 2)
+            self.show_menu()
+
+            try:
+                choice = int(input("\nВыберите действие: "))
+            except:
+                print("Нужно число!")
+                continue
+
+            if choice == 0:
+                self.save()
+                print("Выход...")
+                break
+            elif choice == 1:
+                self.serve_client()
+            elif choice == 2:
+                self.check_cisterns()
+            elif choice == 3:
+                self.refuel_cistern()
+            elif choice == 4:
+                self.show_stats()
+            elif choice == 5:
+                self.show_history()
+            elif choice == 6:
+                self.transfer_fuel()
+            elif choice == 7:
+                self.toggle_cistern()
+            elif choice == 8:
+                self.show_columns()
+            elif choice == 9:
+                self.emergency()
+            else:
+                print("Нет такого пункта!")
+if __name__ == "__main__":
+    azs = AZS()
+    azs.run()
